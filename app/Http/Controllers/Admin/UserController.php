@@ -6,21 +6,24 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rules;
 
 class UserController extends Controller
 {
-    public function __construct()
-    {
-        $this->middleware('auth');
-        $this->middleware('can:manage-users')->only(['index', 'create', 'store', 'edit', 'update', 'destroy']);
-    }
-
     /**
      * Listar todos os usuários
      */
     public function index(Request $request)
     {
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
+        // Verificar se é admin (opcional - remova se quiser acesso livre)
+        // if (!auth()->user()->isAdmin()) {
+        //     abort(403, 'Acesso restrito a administradores.');
+        // }
+
         $search = $request->get('search');
         
         $users = User::when($search, function ($query, $search) {
@@ -28,7 +31,7 @@ class UserController extends Controller
                         ->orWhere('email', 'like', "%{$search}%");
         })
         ->orderBy('name')
-        ->paginate(20);
+        ->paginate(10);
 
         return view('admin.users.index', compact('users', 'search'));
     }
@@ -38,6 +41,11 @@ class UserController extends Controller
      */
     public function create()
     {
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
         return view('admin.users.create');
     }
 
@@ -46,26 +54,26 @@ class UserController extends Controller
      */
     public function store(Request $request)
     {
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
         $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:users'],
-            'password' => ['required', 'confirmed', Rules\Password::defaults()],
-            'type' => ['required', 'in:admin,professional,assistant'],
-            'crp' => ['nullable', 'string', 'max:20'],
-            'phone' => ['required', 'string', 'max:20'],
-            'specialties' => ['nullable', 'string'],
-            'is_active' => ['boolean'],
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:8|confirmed',
+            'type' => 'required|in:admin,professional,assistant',
+            'phone' => 'required|string|max:20',
         ]);
 
-        $user = User::create([
+        User::create([
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'type' => $request->type,
-            'crp' => $request->crp,
             'phone' => $request->phone,
-            'specialties' => $request->specialties,
-            'is_active' => $request->boolean('is_active'),
+            'is_active' => true,
         ]);
 
         return redirect()->route('users.index')
@@ -77,7 +85,11 @@ class UserController extends Controller
      */
     public function show(User $user)
     {
-        $user->loadCount(['patients', 'appointments', 'invoices']);
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
         return view('admin.users.show', compact('user'));
     }
 
@@ -86,6 +98,11 @@ class UserController extends Controller
      */
     public function edit(User $user)
     {
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
         return view('admin.users.edit', compact('user'));
     }
 
@@ -94,31 +111,23 @@ class UserController extends Controller
      */
     public function update(Request $request, User $user)
     {
-        $rules = [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:users,email,' . $user->id],
-            'type' => ['required', 'in:admin,professional,assistant'],
-            'crp' => ['nullable', 'string', 'max:20'],
-            'phone' => ['required', 'string', 'max:20'],
-            'specialties' => ['nullable', 'string'],
-            'is_active' => ['boolean'],
-        ];
-
-        // Apenas validar senha se for fornecida
-        if ($request->filled('password')) {
-            $rules['password'] = ['confirmed', Rules\Password::defaults()];
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
         }
 
-        $request->validate($rules);
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users,email,' . $user->id,
+            'type' => 'required|in:admin,professional,assistant',
+            'phone' => 'required|string|max:20',
+        ]);
 
         $data = [
             'name' => $request->name,
             'email' => $request->email,
             'type' => $request->type,
-            'crp' => $request->crp,
             'phone' => $request->phone,
-            'specialties' => $request->specialties,
-            'is_active' => $request->boolean('is_active'),
         ];
 
         if ($request->filled('password')) {
@@ -132,10 +141,15 @@ class UserController extends Controller
     }
 
     /**
-     * Excluir usuário (soft delete)
+     * Excluir usuário
      */
     public function destroy(User $user)
     {
+        // Verificar autenticação
+        if (!auth()->check()) {
+            return redirect()->route('login');
+        }
+
         // Não permitir excluir a si mesmo
         if ($user->id === auth()->id()) {
             return redirect()->route('users.index')
@@ -146,26 +160,5 @@ class UserController extends Controller
 
         return redirect()->route('users.index')
             ->with('success', 'Usuário excluído com sucesso!');
-    }
-
-    /**
-     * Restaurar usuário excluído
-     */
-    public function restore($id)
-    {
-        $user = User::withTrashed()->findOrFail($id);
-        $user->restore();
-
-        return redirect()->route('users.index')
-            ->with('success', 'Usuário restaurado com sucesso!');
-    }
-
-    /**
-     * Listar usuários excluídos
-     */
-    public function trashed()
-    {
-        $users = User::onlyTrashed()->orderBy('deleted_at', 'desc')->paginate(20);
-        return view('admin.users.trashed', compact('users'));
     }
 }
